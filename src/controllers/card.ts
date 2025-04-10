@@ -1,111 +1,128 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import Card from '../models/card';
 import HttpStatus from '../utils/httpStatus';
+import BadRequestError from '../errors/badRequestError';
+import NotFoundError from '../errors/notFoundError';
+import UnauthorizedError from '../errors/unauthorizedError';
+import ForbiddenError from '../errors/forbiddenError';
 
-export const getAllCards = async (req: Request, res: Response) => {
+export const getAllCards = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const cards = await Card.find({});
-    return res.status(HttpStatus.OK).json(cards);
+    res.send({ data: cards });
   } catch (error) {
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
+    next(error);
   }
 };
 
-export const createCard = async (req: Request, res: Response) => {
+export const createCard = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const owner = req.user?._id;
     const { name, link } = req.body;
 
     if (!owner) {
-      return res.status(HttpStatus.UNAUTHORIZED).json({ message: 'Пользователь не аутентифицирован' });
+      throw new UnauthorizedError('Пользователь не аутентифицирован');
     }
 
     const newCard = await Card.create({ name, link, owner });
-    return res.status(HttpStatus.CREATED).json(newCard);
+    res.status(HttpStatus.CREATED).send({ data: newCard });
   } catch (error) {
     if (error instanceof mongoose.Error.ValidationError) {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        message: 'Некорректные данные',
-        error: error.message,
-      });
+      next(new BadRequestError(error.message));
+    } else {
+      next(error);
     }
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
   }
 };
 
-export const removeCard = async (req: Request, res: Response) => {
-  try {
-    const { cardId } = req.params;
+export const removeCard = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const { cardId } = req.params;
 
+  if (!req.user?._id) {
+    return next(
+      new BadRequestError('Не передан id текущего пользователя для удаления карточки'),
+    );
+  }
+
+  try {
     if (!mongoose.Types.ObjectId.isValid(cardId)) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ message: 'Неверный _id карточки' });
+      return next(new BadRequestError('Неверный _id карточки'));
     }
 
     const card = await Card.findById(cardId);
+
     if (!card) {
-      return res.status(HttpStatus.NOT_FOUND).json({ message: 'Карточка не найдена' });
+      return next(new NotFoundError('Карточка не найдена'));
     }
 
-    return res.status(HttpStatus.OK).json({ message: 'Карточка успешно удалена' });
+    if (card.owner.toString() !== req.user._id) {
+      return next(
+        new ForbiddenError(
+          'Карточка не принадлежит текущему пользователю. Невозможно удалить карточку',
+        ),
+      );
+    }
+
+    await card.deleteOne();
+    return res.send({ data: card });
   } catch (error) {
     if (error instanceof mongoose.Error.CastError) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ message: 'Неверный _id карточки' });
+      return next(new BadRequestError('Некорректный формат _id карточки'));
     }
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
+
+    return next(error);
   }
 };
 
-export const likeCard = async (req: Request, res: Response) => {
-  try {
-    const { cardId } = req.params;
+export const likeCard = async (req: Request, res: Response, next: NextFunction) => {
+  const { cardId } = req.params;
 
+  try {
     if (!mongoose.Types.ObjectId.isValid(cardId)) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ message: 'Неверный _id карточки' });
+      throw new BadRequestError('Неверный _id карточки');
     }
 
-    const card = await Card.findById(
+    const card = await Card.findByIdAndUpdate(
       cardId,
       { $addToSet: { likes: req.user?._id } },
       { new: true },
     ).populate('owner');
 
     if (!card) {
-      return res.status(HttpStatus.NOT_FOUND).json({ message: 'Карточка не найдена' });
+      throw new NotFoundError('Карточка не найдена');
     }
 
-    return res.status(HttpStatus.OK).json(card);
+    res.send({ data: card });
   } catch (error) {
-    if (error instanceof mongoose.Error.CastError) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ message: 'Неверный _id карточки' });
-    }
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
+    next(error);
   }
 };
 
-export const dislikeCard = async (req: Request, res: Response) => {
-  try {
-    const { cardId } = req.params;
+export const dislikeCard = async (req: Request, res: Response, next: NextFunction) => {
+  const { cardId } = req.params;
 
+  try {
     if (!mongoose.Types.ObjectId.isValid(cardId)) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ message: 'Неверный _id карточки' });
+      throw new BadRequestError('Неверный _id карточки');
     }
 
-    const card = await Card.findById(
+    const card = await Card.findByIdAndUpdate(
       cardId,
       { $pull: { likes: req.user?._id } },
       { new: true },
     ).populate('owner');
 
     if (!card) {
-      return res.status(HttpStatus.NOT_FOUND).json({ message: 'Карточка не найдена' });
+      throw new NotFoundError('Карточка не найдена');
     }
 
-    return res.status(HttpStatus.OK).json(card);
+    res.send({ data: card });
   } catch (error) {
-    if (error instanceof mongoose.Error.CastError) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ message: 'Неверный _id карточки' });
-    }
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
+    next(error);
   }
 };

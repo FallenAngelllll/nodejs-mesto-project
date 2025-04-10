@@ -1,115 +1,175 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import User from '../models/user';
 import HttpStatus from '../utils/httpStatus';
+import NotFoundError from '../errors/notFoundError';
+import BadRequestError from '../errors/badRequestError';
+import ConflictError from '../errors/conflictError';
+import UnauthorizedError from '../errors/unauthorizedError';
 
-export const getAllUsers = async (req: Request, res: Response) => {
+export const getAllUsers = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const users = await User.find({});
-    res.status(HttpStatus.OK).json(users);
+    res.send({ data: users });
   } catch (error) {
-    res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
+    next(error);
   }
 };
 
-export const getUserById = async (req: Request, res: Response) => {
+export const getUserById = async (req: Request, res: Response, next: NextFunction) => {
   const { userId } = req.params;
 
   try {
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-      res.status(HttpStatus.BAD_REQUEST).json({ message: 'Некорректный _id пользователя' });
-      return;
+      throw new BadRequestError('Некорректный _id пользователя');
     }
 
     const user = await User.findById(userId);
+
     if (!user) {
-      res.status(HttpStatus.NOT_FOUND).json({ message: 'Пользователь по id не найден' });
-      return;
+      throw new NotFoundError('Пользователь по id не найден');
     }
 
-    res.status(HttpStatus.OK).json(user);
+    res.send({ data: user });
   } catch (error) {
-    if (error instanceof mongoose.Error.CastError) {
-      res.status(HttpStatus.BAD_REQUEST).json({ message: 'Ошибка обработки идентификатора пользователя' });
-    } else {
-      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
-    }
+    next(error);
   }
 };
 
-export const createUser = async (req: Request, res: Response) => {
-  const { name, about, avatar } = req.body;
+export const getCurrentUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  const userId = req.user?._id;
+  if (!userId) {
+    next(new UnauthorizedError('Пользователь не аутентифицирован'));
+    return;
+  }
 
   try {
-    const newUser = await User.create({ name, about, avatar });
-    res.status(HttpStatus.CREATED).json(newUser);
+    const user = await User.findById(userId);
+    if (!user) {
+      next(new NotFoundError('Пользователь не найден'));
+      return;
+    }
+
+    res.send({ data: user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createUser = async (req: Request, res: Response, next: NextFunction) => {
+  const {
+    name, about, avatar, email, password,
+  } = req.body;
+
+  try {
+    const hashPassword = await bcrypt.hash(password, 10);
+    const newUser = await User.create({
+      name, about, avatar, email, password: hashPassword,
+    });
+    res.status(HttpStatus.CREATED).json({ data: newUser });
   } catch (error) {
     if (error instanceof mongoose.Error.ValidationError) {
-      res.status(HttpStatus.BAD_REQUEST).json({ message: 'Ошибка валидации при создании аккаунта', error: error.message });
+      next(new BadRequestError(error.message));
+    } else if ((error as any).code === 11000) {
+      next(new ConflictError('Пользователь с таким email уже существует'));
     } else {
-      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
+      next(error);
     }
   }
 };
 
-export const updateUserProfile = async (req: Request, res: Response) => {
-  try {
-    const { name, about } = req.body;
-    const userId = req.user?._id;
+const { JWT_SECRET = 'any-secret-key' } = process.env;
 
-    if (!userId) {
-      res.status(HttpStatus.UNAUTHORIZED).json({ message: 'Пользователь не аутентифицирован' });
+export const login = async (req: Request, res: Response, next: NextFunction) => {
+  const { email, password } = req.body;
+
+  try {
+    const user = await User.findOne({ email }).select('+password');
+    if (!user) {
+      next(new UnauthorizedError('Неправильные почта или пароль'));
       return;
     }
 
-    const updatedUser = await User.findById(
+    const isPasswordCorrect = await bcrypt.compare(password, user.password);
+    if (!isPasswordCorrect) {
+      next(new UnauthorizedError('Неправильные почта или пароль'));
+      return;
+    }
+
+    const token = jwt.sign({ _id: user._id }, JWT_SECRET, { expiresIn: '7d' });
+
+    res.cookie('jwt', token, {
+      httpOnly: true,
+      sameSite: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.status(HttpStatus.OK).json({ token });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateUserProfile = async (req: Request, res: Response, next: NextFunction) => {
+  const { name, about } = req.body;
+  const userId = req.user?._id;
+
+  try {
+    if (!userId) {
+      throw new UnauthorizedError('Пользователь не аутентифицирован');
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
       userId,
       { name, about },
       { new: true, runValidators: true },
     );
 
     if (!updatedUser) {
-      res.status(HttpStatus.NOT_FOUND).json({ message: 'Пользователь не найден' });
-      return;
+      throw new NotFoundError('Пользователь не найден');
     }
 
-    res.status(HttpStatus.OK).json(updatedUser);
+    res.send({ data: updatedUser });
   } catch (error) {
     if (error instanceof mongoose.Error.ValidationError) {
-      res.status(HttpStatus.BAD_REQUEST).json({ message: 'Ошибка валидации', error: error.message });
+      next(new BadRequestError(error.message));
     } else {
-      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
+      next(error);
     }
   }
 };
 
-export const updateUserAvatar = async (req: Request, res: Response) => {
-  try {
-    const { avatar } = req.body;
-    const userId = req.user?._id;
+export const updateUserAvatar = async (req: Request, res: Response, next: NextFunction) => {
+  const { avatar } = req.body;
+  const userId = req.user?._id;
 
+  try {
     if (!userId) {
-      res.status(HttpStatus.UNAUTHORIZED).json({ message: 'Пользователь не аутентифицирован' });
-      return;
+      throw new UnauthorizedError('Пользователь не аутентифицирован');
     }
 
-    const updatedUser = await User.findById(
+    const updatedUser = await User.findByIdAndUpdate(
       userId,
       { avatar },
       { new: true, runValidators: true },
     );
 
     if (!updatedUser) {
-      res.status(HttpStatus.NOT_FOUND).json({ message: 'Пользователь не найден' });
-      return;
+      throw new NotFoundError('Пользователь не найден');
     }
 
-    res.status(HttpStatus.OK).json(updatedUser);
+    res.send({ data: updatedUser });
   } catch (error) {
     if (error instanceof mongoose.Error.ValidationError) {
-      res.status(HttpStatus.BAD_REQUEST).json({ message: 'Ошибка валидации', error: error.message });
+      next(new BadRequestError(error.message));
     } else {
-      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ message: 'Ошибка сервера' });
+      next(error);
     }
   }
 };

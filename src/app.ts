@@ -1,29 +1,28 @@
-import express, { NextFunction, Request, Response } from 'express';
+import express from 'express';
 import mongoose from 'mongoose';
+import cookieParser from 'cookie-parser';
+import { errors } from 'celebrate';
+import helmet from 'helmet';
+import cors from 'cors';
+import { errorLogger, requestLogger } from './middlewares/logger';
+import limiter from './middlewares/rateLimiter';
+import errorHandler from './middlewares/errorHandler';
 import routes from './routes';
 
-const PORT = 3000;
+const { PORT = 3000 } = process.env;
 const server = express();
 
-server.use((req: Request, res: Response, next: NextFunction) => {
-  req.user = {
-    _id: '67ee7a4f9338c9080ac4ac2f',
-  };
-  next();
-});
+mongoose.connect('mongodb://localhost:27017/mestodb');
 
+server.use(cors());
+server.use(helmet());
 server.use(express.json());
+server.use(cookieParser());
+server.use(limiter);
+server.use(requestLogger);
 server.use(routes);
+server.use(errorLogger);
+server.use(errors());
+server.use(errorHandler);
 
-mongoose
-  .connect('mongodb://localhost:27017/mestodb')
-  .then(() => {
-    server.listen(PORT, () => {
-      // eslint-disable-next-line no-console
-      console.log(`Сервер успешно стартовал на порту: ${PORT}`);
-    });
-  })
-  .catch((error) => {
-    // eslint-disable-next-line no-console
-    console.error('Ошибка подключения к базе данных:', error);
-  });
+server.listen(+PORT);
