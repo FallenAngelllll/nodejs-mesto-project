@@ -7,8 +7,8 @@ import { profileInfoValidation, idValidationRules, avatarUrlValidation } from '.
 const router = Router();
 
 router.get('/', getAllUsers);
-router.get('/:userId', idValidationRules, getUserById);
 router.get('/me', getCurrentUser);
+router.get('/:userId', idValidationRules, getUserById);
 router.patch('/me', profileInfoValidation, updateUserProfile);
 router.patch('/me/avatar', avatarUrlValidation, updateUserAvatar);
 

@@ -68,19 +68,27 @@ export const createUser = async (req: Request, res: Response, next: NextFunction
   } = req.body;
 
   try {
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return next(new ConflictError('Пользователь с таким email уже существует'));
+    }
+
     const hashPassword = await bcrypt.hash(password, 10);
     const newUser = await User.create({
-      name, about, avatar, email, password: hashPassword,
+      name,
+      about,
+      avatar,
+      email,
+      password: hashPassword,
     });
-    res.status(HttpStatus.CREATED).json({ data: newUser });
+
+    return res.status(HttpStatus.CREATED).json({ data: newUser });
   } catch (error) {
     if (error instanceof mongoose.Error.ValidationError) {
-      next(new BadRequestError(error.message));
-    } else if ((error as any).code === 11000) {
-      next(new ConflictError('Пользователь с таким email уже существует'));
-    } else {
-      next(error);
+      return next(new BadRequestError(error.message));
     }
+
+    return next(error);
   }
 };
 
@@ -104,7 +112,7 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
 
     const token = jwt.sign({ _id: user._id }, JWT_SECRET, { expiresIn: '7d' });
 
-    res.cookie('jwt', token, {
+    res.cookie('token', token, {
       httpOnly: true,
       sameSite: true,
       maxAge: 7 * 24 * 60 * 60 * 1000,
