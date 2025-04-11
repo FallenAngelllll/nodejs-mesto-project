@@ -8,11 +8,11 @@ import { errorLogger, requestLogger } from './middlewares/logger';
 import limiter from './middlewares/rateLimiter';
 import errorHandler from './middlewares/errorHandler';
 import routes from './routes';
+import config from './config';
 
-const { PORT = 3000 } = process.env;
 const server = express();
 
-mongoose.connect('mongodb://localhost:27017/mestodb');
+mongoose.connect(config.mongoUrl);
 
 server.use(cors());
 server.use(helmet());
@@ -25,4 +25,4 @@ server.use(errorLogger);
 server.use(errors());
 server.use(errorHandler);
 
-server.listen(+PORT);
+server.listen(config.port);

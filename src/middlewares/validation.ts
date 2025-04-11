@@ -29,12 +29,14 @@ export const cardValidationRules = celebrate({
 export const idValidationRules = celebrate({
   [Segments.PARAMS]: Joi.object({
     id: Joi.string()
+      .length(24)
+      .hex()
       .required()
-      .custom((value, helpers) => {
-        if (Types.ObjectId.isValid(value)) {
-          return value;
-        }
-        return helpers.message({ any: 'Передан неверный id' });
+      .messages({
+        'string.base': 'ID должен быть строкой',
+        'string.length': 'ID должен содержать 24 символа',
+        'string.hex': 'ID должен быть hex-строкой',
+        'any.required': 'ID обязателен для передачи',
       }),
   }),
 });

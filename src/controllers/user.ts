@@ -22,10 +22,6 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
   const { userId } = req.params;
 
   try {
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      throw new BadRequestError('Некорректный _id пользователя');
-    }
-
     const user = await User.findById(userId);
 
     if (!user) {
